@@ -10,3 +10,7 @@ uvicorn[standard]
 pydantic
 pytest
 httpx
+onnxruntime
+onnxmltools
+skl2onnx
+loguru

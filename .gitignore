@@ -1,5 +1,10 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
 .pytest_cache/
-logs/*.log
+logs/
+data/
+models/
+catboost_info/
+.DS_Store
