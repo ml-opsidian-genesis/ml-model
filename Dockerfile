@@ -12,7 +12,6 @@ RUN mkdir -p models
 
 ENV MODEL_VERSION="v1.0.0"
 
-# Download the model artifacts dynamically during the Render build process
 RUN wget -q -O models/flood_model.onnx "https://huggingface.co/teamfalsepositives/flood-risk-model/resolve/${MODEL_VERSION}/flood_model.onnx"
 RUN wget -q -O models/flood_model.pkl "https://huggingface.co/teamfalsepositives/flood-risk-model/resolve/${MODEL_VERSION}/flood_model.pkl"
 
