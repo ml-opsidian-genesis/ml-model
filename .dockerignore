@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+data/
+catboost_info/
+.DS_Store
+.git/
+.gitignore
+README.md
