@@ -1,0 +1,34 @@
+name: Continuous Integration & Deployment (CI/CD)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Pytest
+        run: pytest tests/
+
+      - name: Deploy to Hugging Face Spaces
+        if: success()
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git remote add space https://huggingface.co/spaces/teamfalsepositives/flood-risk-api
+          git push --force https://teamfalsepositives:$HF_TOKEN@huggingface.co/spaces/teamfalsepositives/flood-risk-api main
