@@ -17,4 +17,6 @@ RUN wget -q -O models/flood_model.pkl "https://huggingface.co/teamfalsepositives
 
 COPY . .
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+EXPOSE 7860
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
