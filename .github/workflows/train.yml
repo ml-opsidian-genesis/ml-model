@@ -27,6 +27,8 @@ jobs:
           pip install huggingface_hub
 
       - name: Train New Model
+        env:
+          PYTHONPATH: .
         run: python src/train.py
 
       - name: Upload to Hugging Face
