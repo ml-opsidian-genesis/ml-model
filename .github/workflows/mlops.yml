@@ -1,0 +1,114 @@
+name: MLOps Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  train-and-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      model_updated: ${{ steps.check_version.outputs.changed }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+
+      - name: Check if VERSION changed
+        id: check_version
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep -q "^VERSION$"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "VERSION file changed. Initiating training pipeline."
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No VERSION change detected. Skipping training."
+          fi
+
+      - name: Set up Python
+        if: steps.check_version.outputs.changed == 'true'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        if: steps.check_version.outputs.changed == 'true'
+        run: |
+          pip install -r requirements.txt
+          pip install huggingface_hub
+
+      - name: Train New Model
+        if: steps.check_version.outputs.changed == 'true'
+        env:
+          PYTHONPATH: .
+        run: python src/train.py
+
+      - name: Upload to Hugging Face
+        if: steps.check_version.outputs.changed == 'true'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          VERSION_TAG=$(cat VERSION)
+          echo "Uploading model version $VERSION_TAG..."
+          python src/upload_model.py $VERSION_TAG
+          echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
+
+      - name: Update Dockerfile
+        if: steps.check_version.outputs.changed == 'true'
+        run: |
+          sed -i "s/ENV MODEL_VERSION=.*/ENV MODEL_VERSION=\"${{ env.VERSION_TAG }}\"/g" Dockerfile
+
+      - name: Commit and Push Code Update
+        if: steps.check_version.outputs.changed == 'true'
+        run: |
+          git config --global user.name "MLOps Bot"
+          git config --global user.email "bot@mlops.com"
+          git add Dockerfile
+          if ! git diff --cached --quiet; then
+            git commit -m "🤖 Auto-update model to version ${{ env.VERSION_TAG }}"
+            git push
+          fi
+
+  test-and-deploy:
+    needs: train-and-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Pull Latest Code
+        run: git pull origin main
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download Model for Tests
+        run: |
+          MODEL_VERSION=$(grep 'ENV MODEL_VERSION' Dockerfile | cut -d '"' -f 2)
+          echo "Downloading model version $MODEL_VERSION for tests..."
+          mkdir -p models
+          wget -q -O models/flood_model.onnx "https://huggingface.co/teamfalsepositives/flood-risk-model/resolve/${MODEL_VERSION}/flood_model.onnx"
+          wget -q -O models/flood_model.pkl "https://huggingface.co/teamfalsepositives/flood-risk-model/resolve/${MODEL_VERSION}/flood_model.pkl"
+
+      - name: Run Pytest
+        run: pytest tests/
+
+      - name: Deploy to Hugging Face Spaces
+        if: success()
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git remote add space https://huggingface.co/spaces/teamfalsepositives/flood-risk-api
+          git push --force https://teamfalsepositives:$HF_TOKEN@huggingface.co/spaces/teamfalsepositives/flood-risk-api main
