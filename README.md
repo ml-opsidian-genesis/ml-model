@@ -1,3 +1,13 @@
+---
+title: Flood Risk API
+emoji: 🌊
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # FloodRisk Prediction Model
 
 This project contains a machine learning pipeline and a FastAPI application to predict flood risk scores based on geographical and environmental features.
