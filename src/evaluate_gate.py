@@ -44,19 +44,17 @@ def main():
             with open(old_metrics_path, 'r') as f:
                 old_metrics = json.load(f)
         except Exception as e:
-            print(f"Warning: Could not download old metrics for {old_version} (this is normal for the first run).")
+            print(f"Warning: Could not download old metrics for {old_version}.")
 
-        # Dynamic Thresholds
-        if old_metrics:
-            MIN_R2 = old_metrics.get("r2", 0.50)
-            MAX_RMSE = old_metrics.get("rmse", 0.15)
-            print(f"Dynamic Gate Set! New model must beat -> R2: {MIN_R2:.4f}, RMSE: {MAX_RMSE:.4f}")
-        else:
-            MIN_R2 = 0.50  
-            MAX_RMSE = 0.15
-            print(f"Static Gate Set! New model must beat -> R2: {MIN_R2:.4f}, RMSE: {MAX_RMSE:.4f}")
+        if not old_metrics:
+            print(f"ERROR: Could not find production metrics.json for version {old_version} on Hugging Face.")
+            print("To pass the gate, you must upload a baseline metrics.json to the current live tag.")
+            sys.exit(1)
+            
+        MIN_R2 = old_metrics.get("r2", 0.0)
+        MAX_RMSE = old_metrics.get("rmse", 999.0)
+        print(f"Dynamic Gate Set! New model must beat -> R2: {MIN_R2:.4f}, RMSE: {MAX_RMSE:.4f}")
         
-        # We use strict equality (>= and <=) so that identical models (same data) pass the gate
         if r2_score < MIN_R2:
             print(f"MODEL DEGRADATION DETECTED: R2 score ({r2_score:.4f}) is worse than production ({MIN_R2:.4f})!")
             sys.exit(1)
