@@ -95,12 +95,14 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Download Model for Tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           MODEL_VERSION=$(grep 'ENV MODEL_VERSION' Dockerfile | cut -d '"' -f 2)
           echo "Downloading model version $MODEL_VERSION for tests..."
           mkdir -p models
-          wget -q -O models/flood_model.onnx "https://huggingface.co/teamfalsepositives/flood-risk-model/resolve/${MODEL_VERSION}/flood_model.onnx"
-          wget -q -O models/flood_model.pkl "https://huggingface.co/teamfalsepositives/flood-risk-model/resolve/${MODEL_VERSION}/flood_model.pkl"
+          pip install huggingface_hub
+          huggingface-cli download teamfalsepositives/flood-risk-model --revision $MODEL_VERSION --local-dir models --include "*.onnx" "*.pkl"
 
       - name: Run Pytest
         env:
