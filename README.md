@@ -52,7 +52,7 @@ source .venv/bin/activate
 
 ## Project Structure
 
-- `app/main.py`: The FastAPI server exposing the flood risk prediction model.
+- `app/main.py`: The FastAPI server exposing the flood risk prediction model (`POST /predict` for a single location, `POST /predict/batch` for multiple locations in one call, plus `GET /health` and `GET /metrics`).
 - `src/`: Contains the pipeline logic, model evaluation, and training scripts.
   - `train.py`: The main script to train the model and save artifacts.
   - `pipeline.py`: Feature engineering functions.

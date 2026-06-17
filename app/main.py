@@ -2,6 +2,7 @@
 import sys, json
 from pathlib import Path
 from datetime import datetime
+from typing import List
 
 import joblib
 import numpy as np
@@ -12,7 +13,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 
 sys.path.append(str(Path(__file__).parent.parent))
-from src.pipeline import engineer
+from src.pipeline import engineer, add_district_te, apply_fitted_transforms
 
 # ── Logging ──────────────────────────────────────────────────
 logger.remove()
@@ -25,6 +26,11 @@ artifact  = joblib.load("models/flood_model.pkl")
 encoder   = artifact["encoder"]
 FEATURES  = artifact["features"]
 CAT_COLS  = artifact["cat_cols"]
+TE_MEAN_MAP       = artifact.get("district_te_mean_map", {})
+TE_STD_MAP        = artifact.get("district_te_std_map", {})
+TE_GLOBAL_MEAN    = artifact.get("te_global_mean", 0.0)
+TE_GLOBAL_STD     = artifact.get("te_global_std", 0.0)
+FITTED_TRANSFORMS = artifact.get("fitted_transforms", {})
 
 sess = rt.InferenceSession("models/flood_model.onnx")
 input_name = sess.get_inputs()[0].name
@@ -95,6 +101,32 @@ class PredictionOut(BaseModel):
     model_version:    str
     timestamp:        str
 
+class BatchLocationInput(LocationInput):
+    """Inherits every LocationInput field; id/name are identity-only,
+    not features -- stripped back out before scoring."""
+    id: str = Field(..., json_schema_extra={"example": "loc_colombo_01"})
+    name: str = Field("", json_schema_extra={"example": "Colombo Fort"})
+
+class BatchScoreRequest(BaseModel):
+    locations: List[BatchLocationInput]
+
+class BatchScoreItem(BaseModel):
+    id: str
+    name: str
+    district: str | None
+    latitude: float | None
+    longitude: float | None
+    flood_risk_score: float
+    risk_level: str
+    confidence: str
+    features: dict
+
+class BatchScoreResponse(BaseModel):
+    model_version: str
+    scored_at: str
+    count: int
+    results: List[BatchScoreItem]
+
 def risk_label(s: float) -> str:
     if s < 0.25: return "Low"
     if s < 0.50: return "Moderate"
@@ -107,6 +139,27 @@ def confidence(s: float) -> str:
     if d > 0.15: return "Moderate"
     return "Low"
 
+def score_one(payload: dict) -> tuple[float, str, str]:
+    """Run the full feature-engineering + encoding + ONNX inference pipeline
+    for a single location payload (already a plain dict, e.g. from
+    LocationInput.dict()). Returns (score, risk_level, confidence)."""
+    df = pd.DataFrame([payload])
+    df.fillna(value=np.nan, inplace=True)
+    df = engineer(df)
+    df = add_district_te(df, TE_MEAN_MAP, TE_STD_MAP, TE_GLOBAL_MEAN, TE_GLOBAL_STD)
+    df = apply_fitted_transforms(df, FITTED_TRANSFORMS)
+
+    for f in FEATURES:
+        if f not in df.columns:
+            df[f] = np.nan
+    X = df[FEATURES].copy()
+    X[CAT_COLS] = encoder.transform(X[CAT_COLS].astype(str))
+
+    X_float32 = X.astype(np.float32).values
+    pred_onnx = sess.run(None, {input_name: X_float32})[0]
+    score = float(np.clip(pred_onnx.flatten()[0], 0, 1))
+    return round(score, 4), risk_label(score), confidence(score)
+
 # ── Routes ───────────────────────────────────────────────────
 @app.get("/health")
 def health():
@@ -115,36 +168,50 @@ def health():
 @app.post("/predict", response_model=PredictionOut)
 def predict(req: LocationInput):
     try:
-        df = pd.DataFrame([req.dict()])
-        df.fillna(value=np.nan, inplace=True)
-        df = engineer(df)
-
-        for f in FEATURES:
-            if f not in df.columns:
-                df[f] = np.nan
-        X = df[FEATURES].copy()
-        X[CAT_COLS] = encoder.transform(X[CAT_COLS].astype(str))
-        
-        X_float32 = X.astype(np.float32).values
-        pred_onnx = sess.run(None, {input_name: X_float32})[0]
-        score = float(np.clip(pred_onnx.flatten()[0], 0, 1))
+        score, level, conf = score_one(req.dict())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
     entry = {
         "timestamp":  datetime.utcnow().isoformat(),
         "input":      req.dict(),
-        "score":      round(score, 4),
-        "risk_level": risk_label(score),
+        "score":      score,
+        "risk_level": level,
     }
     logger.info(json.dumps(entry))
 
     return PredictionOut(
-        flood_risk_score=round(score, 4),
-        risk_level=risk_label(score),
-        confidence=confidence(score),
+        flood_risk_score=score,
+        risk_level=level,
+        confidence=conf,
         model_version=MODEL_VERSION,
         timestamp=entry["timestamp"],
+    )
+
+@app.post("/predict/batch", response_model=BatchScoreResponse)
+def predict_batch(req: BatchScoreRequest):
+    results: list[BatchScoreItem] = []
+    timestamp = datetime.utcnow().isoformat()
+    for loc in req.locations:
+        payload = loc.dict()
+        try:
+            score, level, conf = score_one(payload)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"location {loc.id}: {e}")
+
+        results.append(BatchScoreItem(
+            id=loc.id, name=loc.name, district=loc.district,
+            latitude=loc.latitude, longitude=loc.longitude,
+            flood_risk_score=score, risk_level=level, confidence=conf,
+            features={k: v for k, v in payload.items() if k not in ("id", "name")},
+        ))
+        logger.info(json.dumps({
+            "timestamp": timestamp, "input": payload, "score": score, "risk_level": level,
+        }))
+
+    return BatchScoreResponse(
+        model_version=MODEL_VERSION, scored_at=timestamp,
+        count=len(results), results=results,
     )
 
 @app.get("/metrics")

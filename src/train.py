@@ -6,7 +6,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import KFold
-from sklearn.preprocessing import OrdinalEncoder
+from sklearn.preprocessing import OrdinalEncoder, PowerTransformer, QuantileTransformer
 import onnxmltools
 from onnxmltools.convert import convert_lightgbm
 from skl2onnx.common.data_types import FloatTensorType
@@ -69,15 +69,40 @@ def train_and_save_model():
     test_df = engineer(test_df)
     global_mean = train_df[T].mean()
 
-    # Keep target encoding setup exactly as in mlops_final.py for saved artifact.
-    kf_save = KFold(N, shuffle=True, random_state=42)
+    # District target-encoding: a simple, static per-district mean/std so the
+    # exact same lookup can be replayed at serving time (OOF folds can't be
+    # reproduced outside of training, so we don't use them for the saved
+    # artifact -- the model is fit on the full training set anyway).
+    global_std = train_df[T].std()
+    district_te_mean_map = train_df.groupby('district')[T].mean().to_dict()
+    district_te_std_map = train_df.groupby('district')[T].std().fillna(global_std).to_dict()
+
     tr2_save, te2_save = train_df.copy(), test_df.copy()
-    dm, dmt = te_oof_mean(tr2_save, te2_save, 'district', kf_save, SMOOTH, T, global_mean)
-    dstd, dst = te_oof_std(tr2_save, te2_save, 'district', kf_save, T)
-    tr2_save['district_te_mean'] = dm
-    tr2_save['district_te_std'] = dstd
-    te2_save['district_te_mean'] = dmt
-    te2_save['district_te_std'] = dst
+    tr2_save['district_te_mean'] = tr2_save['district'].map(district_te_mean_map).fillna(global_mean)
+    tr2_save['district_te_std'] = tr2_save['district'].map(district_te_std_map).fillna(global_std)
+    te2_save['district_te_mean'] = te2_save['district'].map(district_te_mean_map).fillna(global_mean)
+    te2_save['district_te_std'] = te2_save['district'].map(district_te_std_map).fillna(global_std)
+
+    # Yeo-Johnson / quantile transforms: fit on train, persist the fitted
+    # transformer so serving can replay the exact same mapping on new rows.
+    fitted_transforms = {}
+
+    def _fit_transform(df_tr, df_te, src_col, out_col, transformer_cls, **kwargs):
+        if src_col not in df_tr.columns:
+            fitted_transforms[out_col] = None
+            df_tr[out_col] = np.nan
+            df_te[out_col] = np.nan
+            return
+        tf = transformer_cls(**kwargs)
+        df_tr[out_col] = tf.fit_transform(df_tr[[src_col]].astype(float).values).flatten()
+        df_te[out_col] = tf.transform(df_te[[src_col]].astype(float).values).flatten()
+        fitted_transforms[out_col] = tf
+
+    _fit_transform(tr2_save, te2_save, 'elevation_m', 'elevation_m_yeojohnson', PowerTransformer, method='yeo-johnson')
+    _fit_transform(tr2_save, te2_save, 'drainage_index', 'drainage_index_yeojohnson', PowerTransformer, method='yeo-johnson')
+    _fit_transform(tr2_save, te2_save, 'ndvi', 'ndvi_qmap', QuantileTransformer, n_quantiles=100, output_distribution='uniform')
+    _fit_transform(tr2_save, te2_save, 'ndwi', 'ndwi_qmap', QuantileTransformer, n_quantiles=100, output_distribution='uniform')
+    _fit_transform(tr2_save, te2_save, 'built_up_percent', 'built_up_percent_qmap', QuantileTransformer, n_quantiles=100, output_distribution='uniform')
 
     feat_save = [c for c in tr2_save.columns if c not in DROP]
     cat_in_save = [c for c in CAT_COLS if c in feat_save]
@@ -113,6 +138,11 @@ def train_and_save_model():
             'encoder': enc_save,
             'features': feat_save,
             'cat_cols': cat_in_save,
+            'district_te_mean_map': district_te_mean_map,
+            'district_te_std_map': district_te_std_map,
+            'te_global_mean': float(global_mean),
+            'te_global_std': float(global_std),
+            'fitted_transforms': fitted_transforms,
         },
         artifact_path,
     )
