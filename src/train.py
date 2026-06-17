@@ -135,6 +135,11 @@ def train_and_save_model():
         },
     )
 
+    import json
+    metrics_path = OUTPUT_DIR / 'metrics.json'
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=4)
+
     print(f"Training complete. Model saved to {artifact_path}")
     print(f"Run metrics logged to {log_file}")
 

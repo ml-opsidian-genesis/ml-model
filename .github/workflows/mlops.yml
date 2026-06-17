@@ -48,6 +48,12 @@ jobs:
           PYTHONPATH: .
         run: python src/train.py
 
+      - name: Model Evaluation
+        if: steps.check_version.outputs.changed == 'true'
+        env:
+          PYTHONPATH: .
+        run: python src/evaluate_gate.py
+
       - name: Upload to Hugging Face
         if: steps.check_version.outputs.changed == 'true'
         env:

@@ -22,5 +22,12 @@ api.upload_file(
     revision="main"
 )
 
+api.upload_file(
+    path_or_fileobj="models/metrics.json",
+    path_in_repo="metrics.json",
+    repo_id=repo_id,
+    revision="main"
+)
+
 api.create_tag(repo_id=repo_id, tag=version_tag)
 print("Upload complete!")
