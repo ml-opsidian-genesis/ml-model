@@ -44,7 +44,18 @@ def main():
             with open(old_metrics_path, 'r') as f:
                 old_metrics = json.load(f)
         except Exception as e:
-            print(f"Warning: Could not download old metrics for {old_version}.")
+            print(f"Warning: Could not download old metrics for {old_version}. Falling back to main branch...")
+            try:
+                main_metrics_path = hf_hub_download(
+                    repo_id="teamfalsepositives/flood-risk-model",
+                    filename="metrics.json",
+                    revision="main",
+                    token=os.environ.get("HF_TOKEN")
+                )
+                with open(main_metrics_path, 'r') as f:
+                    old_metrics = json.load(f)
+            except Exception as ex:
+                print(f"Warning: Could not download old metrics from main either: {ex}")
 
         if not old_metrics:
             print(f"ERROR: Could not find production metrics.json for version {old_version} on Hugging Face.")
