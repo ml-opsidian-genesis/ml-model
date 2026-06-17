@@ -26,7 +26,7 @@ def test_predict_success():
         "electricity": "Yes",
         "road_quality": "Good",
         "population_density_per_km2": 5000,
-        "built_up_percent": 80.0,
+        "built_up_percent": 0.8,
         "urban_rural": "Urban",
         "rainfall_7d_mm": 50.0,
         "monthly_rainfall_mm": 200.0,
