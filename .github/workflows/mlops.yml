@@ -102,7 +102,7 @@ jobs:
           echo "Downloading model version $MODEL_VERSION for tests..."
           mkdir -p models
           pip install huggingface_hub
-          hf download teamfalsepositives/flood-risk-model --revision $MODEL_VERSION --local-dir models --include "*.onnx" "*.pkl"
+          hf download teamfalsepositives/flood-risk-model flood_model.onnx flood_model.pkl --revision $MODEL_VERSION --local-dir models
 
       - name: Run Pytest
         env:
