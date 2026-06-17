@@ -1,7 +1,8 @@
 # app/main.py
 import sys, json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date as date_cls
+from typing import List, Optional
 
 import joblib
 import numpy as np
@@ -12,7 +13,8 @@ from pydantic import BaseModel, Field
 from loguru import logger
 
 sys.path.append(str(Path(__file__).parent.parent))
-from src.pipeline import engineer
+from src.pipeline import engineer, add_district_te
+from src.mock_features import mock_features
 
 # ── Logging ──────────────────────────────────────────────────
 logger.remove()
@@ -25,6 +27,7 @@ artifact  = joblib.load("models/flood_model.pkl")
 encoder   = artifact["encoder"]
 FEATURES  = artifact["features"]
 CAT_COLS  = artifact["cat_cols"]
+TE_MAP    = artifact.get("te_map")          # persisted district target-encoding
 
 sess = rt.InferenceSession("models/flood_model.onnx")
 input_name = sess.get_inputs()[0].name
@@ -81,6 +84,21 @@ def confidence(s: float) -> str:
     if d > 0.15: return "Moderate"
     return "Low"
 
+def score_input(input_dict: dict) -> float:
+    """Run one feature dict through the engineered pipeline and ONNX model."""
+    df = pd.DataFrame([input_dict])
+    df = engineer(df)
+    if TE_MAP is not None:
+        df = add_district_te(df, TE_MAP)
+    for f in FEATURES:
+        if f not in df.columns:
+            df[f] = np.nan
+    X = df[FEATURES].copy()
+    X[CAT_COLS] = encoder.transform(X[CAT_COLS].astype(str))
+    X_float32 = X.astype(np.float32).values
+    pred_onnx = sess.run(None, {input_name: X_float32})[0]
+    return float(np.clip(pred_onnx.flatten()[0], 0, 1))
+
 # ── Routes ───────────────────────────────────────────────────
 @app.get("/health")
 def health():
@@ -89,18 +107,7 @@ def health():
 @app.post("/predict", response_model=PredictionOut)
 def predict(req: LocationInput):
     try:
-        df = pd.DataFrame([req.dict()])
-        df = engineer(df)
-
-        for f in FEATURES:
-            if f not in df.columns:
-                df[f] = np.nan
-        X = df[FEATURES].copy()
-        X[CAT_COLS] = encoder.transform(X[CAT_COLS].astype(str))
-        
-        X_float32 = X.astype(np.float32).values
-        pred_onnx = sess.run(None, {input_name: X_float32})[0]
-        score = float(np.clip(pred_onnx.flatten()[0], 0, 1))
+        score = score_input(req.dict())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -137,3 +144,69 @@ def metrics():
         "risk_distribution": dist,
         "recent":            lines[-10:],
     }
+
+# ── Batch scoring (FloodGuard morning pipeline) ──────────────
+class BatchLocation(BaseModel):
+    id:        str
+    name:      str   = Field("", example="Colombo")
+    district:  str   = Field(..., example="Colombo")
+    latitude:  float = Field(..., example=6.9271)
+    longitude: float = Field(..., example=79.8612)
+
+class BatchScoreRequest(BaseModel):
+    locations: List[BatchLocation]
+    date:      Optional[str] = Field(None, example="2026-06-16",
+                                     description="ISO date for deterministic mock features; defaults to today.")
+
+class BatchScoreItem(BaseModel):
+    id:               str
+    name:             str
+    district:         str
+    latitude:         float
+    longitude:        float
+    flood_risk_score: float
+    risk_level:       str
+    weather_regime:   str
+    features:         dict
+
+class BatchScoreResponse(BaseModel):
+    model_version: str
+    scored_at:     str
+    count:         int
+    results:       List[BatchScoreItem]
+
+@app.post("/predict/batch", response_model=BatchScoreResponse)
+def predict_batch(req: BatchScoreRequest):
+    """Score every location for a given day using deterministic mock features.
+
+    Used by the FloodGuard scheduled pipeline: one call returns a risk score per
+    location, which the web app persists and uses to drive WhatsApp alerts.
+    """
+    try:
+        on_date = date_cls.fromisoformat(req.date) if req.date else date_cls.today()
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Invalid date: {req.date!r}")
+
+    results = []
+    for loc in req.locations:
+        feats = mock_features(loc.id, loc.district, on_date)
+        regime = feats.pop("_weather_regime", "normal")
+        try:
+            score = score_input(feats)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Scoring failed for {loc.id}: {e}")
+        results.append(BatchScoreItem(
+            id=loc.id, name=loc.name, district=loc.district,
+            latitude=loc.latitude, longitude=loc.longitude,
+            flood_risk_score=round(score, 4),
+            risk_level=risk_label(score),
+            weather_regime=regime,
+            features=feats,
+        ))
+
+    return BatchScoreResponse(
+        model_version="1.0.0",
+        scored_at=datetime.utcnow().isoformat(),
+        count=len(results),
+        results=results,
+    )

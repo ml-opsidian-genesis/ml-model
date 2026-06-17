@@ -19,3 +19,15 @@ def engineer(df: pd.DataFrame) -> pd.DataFrame:
     df['road_quality_ord']    = df['road_quality'].map(
         {'No road access': 0, 'Poor (unpaved)': 1, 'Fair': 2, 'Good (paved)': 3})
     return df
+
+
+def add_district_te(df: pd.DataFrame, te_map: dict) -> pd.DataFrame:
+    """Apply a persisted district target-encoding map (reconstructs at serving
+    time the same ``district_te_mean`` / ``district_te_std`` features used in
+    training, instead of leaving them NaN)."""
+    df = df.copy()
+    mean_map = te_map['mean']
+    std_map = te_map['std']
+    df['district_te_mean'] = df['district'].map(mean_map).fillna(te_map['global_mean'])
+    df['district_te_std'] = df['district'].map(std_map).fillna(te_map['global_std'])
+    return df
