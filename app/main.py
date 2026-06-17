@@ -116,6 +116,7 @@ def health():
 def predict(req: LocationInput):
     try:
         df = pd.DataFrame([req.dict()])
+        df.fillna(value=np.nan, inplace=True)
         df = engineer(df)
 
         for f in FEATURES:
