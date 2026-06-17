@@ -103,6 +103,8 @@ jobs:
           wget -q -O models/flood_model.pkl "https://huggingface.co/teamfalsepositives/flood-risk-model/resolve/${MODEL_VERSION}/flood_model.pkl"
 
       - name: Run Pytest
+        env:
+          PYTHONPATH: .
         run: pytest tests/
 
       - name: Deploy to Hugging Face Spaces
