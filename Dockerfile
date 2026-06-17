@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 RUN mkdir -p models
 
-ENV MODEL_VERSION="v1.0.0"
+ENV MODEL_VERSION="1.0.1"
 
 RUN wget -q -O models/flood_model.onnx "https://huggingface.co/teamfalsepositives/flood-risk-model/resolve/${MODEL_VERSION}/flood_model.onnx"
 RUN wget -q -O models/flood_model.pkl "https://huggingface.co/teamfalsepositives/flood-risk-model/resolve/${MODEL_VERSION}/flood_model.pkl"
