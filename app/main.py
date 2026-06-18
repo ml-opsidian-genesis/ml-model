@@ -14,8 +14,12 @@ from loguru import logger
 
 sys.path.append(str(Path(__file__).parent.parent))
 from src.pipeline import engineer, add_district_te, apply_fitted_transforms
+from src.logstore import log_prediction, log_predictions_batch, fetch_metrics
 
 # ── Logging ──────────────────────────────────────────────────
+# Local file is a debug convenience only (ephemeral on HF Spaces); the
+# durable, queryable record of every prediction is PredictionLog in
+# Postgres, written via src/logstore.py.
 logger.remove()
 Path("logs").mkdir(exist_ok=True)
 logger.add("logs/predictions.jsonl", format="{message}", level="INFO", rotation="10 MB")
@@ -179,6 +183,10 @@ def predict(req: LocationInput):
         "risk_level": level,
     }
     logger.info(json.dumps(entry))
+    log_prediction(
+        source="predict", model_version=MODEL_VERSION, payload=entry["input"],
+        score=score, risk_level=level, confidence=conf,
+    )
 
     return PredictionOut(
         flood_risk_score=score,
@@ -191,6 +199,7 @@ def predict(req: LocationInput):
 @app.post("/predict/batch", response_model=BatchScoreResponse)
 def predict_batch(req: BatchScoreRequest):
     results: list[BatchScoreItem] = []
+    log_entries: list[dict] = []
     timestamp = datetime.utcnow().isoformat()
     for loc in req.locations:
         payload = loc.dict()
@@ -199,15 +208,22 @@ def predict_batch(req: BatchScoreRequest):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"location {loc.id}: {e}")
 
+        features = {k: v for k, v in payload.items() if k not in ("id", "name")}
         results.append(BatchScoreItem(
             id=loc.id, name=loc.name, district=loc.district,
             latitude=loc.latitude, longitude=loc.longitude,
             flood_risk_score=score, risk_level=level, confidence=conf,
-            features={k: v for k, v in payload.items() if k not in ("id", "name")},
+            features=features,
         ))
         logger.info(json.dumps({
             "timestamp": timestamp, "input": payload, "score": score, "risk_level": level,
         }))
+        log_entries.append({
+            "payload": features, "score": score, "risk_level": level,
+            "confidence": conf, "model_version": MODEL_VERSION, "location_id": loc.id,
+        })
+
+    log_predictions_batch(log_entries)
 
     return BatchScoreResponse(
         model_version=MODEL_VERSION, scored_at=timestamp,
@@ -216,6 +232,13 @@ def predict_batch(req: BatchScoreRequest):
 
 @app.get("/metrics")
 def metrics():
+    # Durable, queryable source of truth when DATABASE_URL is configured.
+    db_metrics = fetch_metrics()
+    if db_metrics is not None:
+        return db_metrics
+
+    # Fallback: local file (ephemeral, but lets /metrics work in local dev
+    # without a database connection).
     log_file = Path("logs/predictions.jsonl")
     if not log_file.exists() or log_file.stat().st_size == 0:
         return {"total_predictions": 0, "avg_risk_score": 0,
