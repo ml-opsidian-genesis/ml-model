@@ -5,6 +5,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      use_feedback:
+        description: "Incorporate feedback-derived rows for this training run"
+        type: boolean
+        default: false
 
 jobs:
   train-and-version:
@@ -42,10 +47,18 @@ jobs:
           pip install -r requirements.txt
           pip install huggingface_hub
 
+      - name: Import Feedback
+        if: steps.check_version.outputs.changed == 'true'
+        env:
+          PYTHONPATH: .
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m src.import_feedback
+
       - name: Train New Model
         if: steps.check_version.outputs.changed == 'true'
         env:
           PYTHONPATH: .
+          USE_FEEDBACK: ${{ (inputs.use_feedback && '1') || '' }}
         run: python src/train.py
 
       - name: Model Evaluation

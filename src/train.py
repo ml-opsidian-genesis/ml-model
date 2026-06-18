@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import warnings
 
@@ -40,6 +41,27 @@ def _load_csv(candidates):
     raise FileNotFoundError(f"None of these files exist: {candidates}")
 
 
+def _load_training_data():
+    """train.csv alone by default. Set USE_FEEDBACK=1 to also incorporate
+    feedback-derived rows from `python -m src.import_feedback`
+    (data/feedback.csv), if present. Feedback never goes into the held-out
+    test set -- only train. Opt-in by design: a feedback-informed retrain
+    is a deliberate choice, not the silent default."""
+    train_df = _load_csv(['./train.csv', './data/train.csv'])
+
+    if os.getenv('USE_FEEDBACK') != '1':
+        return train_df
+
+    feedback_path = Path('data/feedback.csv')
+    if feedback_path.exists():
+        fb_df = pd.read_csv(feedback_path)
+        if not fb_df.empty:
+            before = len(train_df)
+            train_df = pd.concat([train_df, fb_df], ignore_index=True)
+            print(f"Incorporated {len(fb_df)} feedback-derived row(s) into training data ({before} -> {len(train_df)}).")
+    return train_df
+
+
 def te_oof_mean(tr_df, te_df, col, kf, smooth, target_col, global_mean):
     om = np.zeros(len(tr_df))
     for tr, va in kf.split(tr_df):
@@ -62,7 +84,7 @@ def te_oof_std(tr_df, te_df, col, kf, target_col):
 
 
 def train_and_save_model():
-    train_df = _load_csv(['./train.csv', './data/train.csv'])
+    train_df = _load_training_data()
     test_df = _load_csv(['./test.csv', './data/test.csv'])
 
     train_df = engineer(train_df)

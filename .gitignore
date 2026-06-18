@@ -8,3 +8,4 @@ models/
 catboost_info/
 .DS_Store
 *.log
+data/feedback.csv
