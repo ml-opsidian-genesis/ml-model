@@ -14,3 +14,4 @@ onnxruntime
 onnxmltools
 skl2onnx
 loguru
+psycopg2-binary
