@@ -1,7 +1,11 @@
 import os
 import uuid
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# .strip(): a trailing newline/whitespace in the secret value (easy to
+# introduce when pasting into a Space secret textbox) makes libpq choke
+# on parameters like channel_binding with a confusing "invalid value"
+# error -- strip defensively so a paste mistake can't silently break logging.
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip() or None
 
 
 def log_prediction(
