@@ -1,5 +1,5 @@
 # app/main.py
-import sys, json
+import os, sys, json
 from pathlib import Path
 from datetime import datetime
 from typing import List
@@ -7,6 +7,9 @@ from typing import List
 import joblib
 import numpy as np
 import pandas as pd
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -15,6 +18,15 @@ from loguru import logger
 sys.path.append(str(Path(__file__).parent.parent))
 from src.pipeline import engineer, add_district_te, apply_fitted_transforms
 from src.logstore import log_prediction, log_predictions_batch, fetch_metrics
+
+# ── Error monitoring ────────────────────────────────────────────
+# No-ops safely if SENTRY_DSN isn't set (e.g. local dev) -- same pattern
+# as every other optional integration in this project.
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN", ""),
+    integrations=[StarletteIntegration(), FastApiIntegration()],
+    traces_sample_rate=0.1,
+)
 
 # ── Logging ──────────────────────────────────────────────────
 # Local file is a debug convenience only (ephemeral on HF Spaces); the
@@ -39,7 +51,6 @@ FITTED_TRANSFORMS = artifact.get("fitted_transforms", {})
 sess = rt.InferenceSession("models/flood_model.onnx")
 input_name = sess.get_inputs()[0].name
 
-import os
 MODEL_VERSION = os.getenv("MODEL_VERSION", "1.0.0")
 
 # ── App ──────────────────────────────────────────────────────

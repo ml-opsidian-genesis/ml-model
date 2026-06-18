@@ -15,3 +15,4 @@ onnxmltools
 skl2onnx
 loguru
 psycopg2-binary
+sentry-sdk[fastapi]
